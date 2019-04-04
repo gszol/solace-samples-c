@@ -17,19 +17,31 @@
  *  MessageReplaySubscriber
  *
  *  This is a modification of the QueueSubscriber example for message replay.
- *  
+ *
  *  First, when the flow connects, all messages are requested from the replay log.
  *  Comments show how to request the replay log from a specific start time.
  *
  *  Second, the flow event handler is extended for the possibility
  *  of a replay start event. This means the router initiated a replay,
- *  and the application must disconnect and reconnect the session 
+ *  and the application must destroy and re-create the flow
  *  to receive the replayed messages.
  */
 
 #include "os.h"
 #include "solclient/solClient.h"
 #include "solclient/solClientMsg.h"
+
+
+// Data structure to hold everything
+// the flow event callback needs.
+// Basically the solClient_session_createFlow argument list.
+struct callback_data_t {
+    char **flowProps;
+    solClient_opaqueSession_pt session_p;
+    solClient_opaqueFlow_pt *flow_pp;
+    solClient_flow_createFuncInfo_t *flowFuncInfo_p;
+    size_t flowFuncInfo_size;
+};
 
 /* Message Count */
 static int msgCount = 0;
@@ -65,14 +77,30 @@ sessionEventCallback ( solClient_opaqueSession_pt opaqueSession_p,
 static void
 flowEventCallback ( solClient_opaqueFlow_pt opaqueFlow_p, solClient_flow_eventCallbackInfo_pt eventInfo_p, void *user_p )
 {
-    solClient_opaqueSession_pt session_p = (solClient_opaqueSession_pt) user_p;
+    struct callback_data_t *callback_data_p = (struct callback_data_t*) user_p;
     solClient_errorInfo_pt errorInfo_p;
     if (eventInfo_p->flowEvent == SOLCLIENT_FLOW_EVENT_DOWN_ERROR) {
         errorInfo_p = solClient_getLastErrorInfo();
         if (errorInfo_p->subCode == SOLCLIENT_SUBCODE_REPLAY_STARTED) {
-            printf ( "Router indicating replay, reconnecting to recieve messages.\n" );
-            solClient_session_disconnect ( session_p );
-            solClient_session_connect ( session_p );
+            printf ( "Router indicating replay, reconnecting flow to recieve messages.\n" );
+            // This way replayed messages can show up as many times as the replay restarts,
+            // without the Assured Delivery subsystem filtering them as duplicates
+            // the second and consecutive times.
+            solClient_flow_destroy(callback_data_p->flow_pp);
+            solClient_session_createFlow ( callback_data_p->flowProps,
+                    callback_data_p->session_p,
+                    callback_data_p->flow_pp,
+                    callback_data_p->flowFuncInfo_p,
+                    callback_data_p->flowFuncInfo_size);
+
+            // Alternatively, the application could reconnect the session instead,
+            // leaving the flow intact (relying on auto-rebind)
+            // and not receive the messages from the replay log repeatedly:
+
+            //solClient_opaqueSession_pt session_p = callback_data_p->session_p;
+            //solClient_session_disconnect ( session_p );
+            //solClient_session_connect ( session_p );
+
         }
 
     }
@@ -93,7 +121,7 @@ flowMessageReceiveCallback ( solClient_opaqueFlow_pt opaqueFlow_p, solClient_opa
     solClient_msg_dump ( msg_p, NULL, 0 );
     printf ( "\n" );
     msgCount++;
-    
+
     /* Acknowledge the message after processing it. */
     if ( solClient_msg_getMsgId ( msg_p, &msgId )  == SOLCLIENT_OK ) {
         printf ( "Acknowledging message Id: %lld.\n", msgId );
@@ -153,7 +181,7 @@ main ( int argc, char *argv[] )
      * CREATE A CONTEXT
      *************************************************************************/
 
-    /* 
+    /*
      * Create a Context, and specify that the Context thread be created
      * automatically instead of having the application create its own
      * Context thread.
@@ -233,7 +261,6 @@ main ( int argc, char *argv[] )
     /* Configure the Flow function information */
     flowFuncInfo.rxMsgInfo.callback_p = flowMessageReceiveCallback;
     flowFuncInfo.eventInfo.callback_p = flowEventCallback;
-    flowFuncInfo.eventInfo.user_p = session_p;
 
     /* Configure the Flow properties */
     propIndex = 0;
@@ -251,8 +278,8 @@ main ( int argc, char *argv[] )
     flowProps[propIndex++] = argv[5];
 
     flowProps[propIndex++] = SOLCLIENT_FLOW_PROP_REPLAY_START_LOCATION;
-    //TODO: describe alternatives as comments: "DATE:<seconds>", "DATE:<time format>"
     flowProps[propIndex] = SOLCLIENT_FLOW_PROP_REPLAY_START_LOCATION_BEGINNING;
+
     // Alternative replay start specifications:
     //
     // Seconds since UNIX epoch:
@@ -263,7 +290,18 @@ main ( int argc, char *argv[] )
     //
     // RFC3339 date with timezone:
     // flowProps[propIndex] = "DATE:2019-04-03T18:48:00Z-05:00";
+
     propIndex++;
+
+    struct callback_data_t callback_data;
+    callback_data.session_p = session_p;
+    callback_data.flow_pp = &flow_p;
+    callback_data.flowProps = ( char ** ) flowProps;
+    callback_data.flowFuncInfo_p = &flowFuncInfo;
+    callback_data.flowFuncInfo_size = sizeof(flowFuncInfo);
+
+    flowFuncInfo.eventInfo.user_p = &callback_data;
+
 
 
     solClient_session_createFlow ( ( char ** ) flowProps,
@@ -274,9 +312,9 @@ main ( int argc, char *argv[] )
      * Wait for messages
      *************************************************************************/
 
-    printf ( "Waiting for messages......\n" );
+    printf ( "Waiting for 10 messages......\n" );
     fflush ( stdout );
-    while ( msgCount < 1 ) {
+    while ( msgCount < 10 ) {
         SLEEP ( 1 );
     }
 
