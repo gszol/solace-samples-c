@@ -31,18 +31,6 @@
 #include "solclient/solClient.h"
 #include "solclient/solClientMsg.h"
 
-
-// Data structure to hold everything
-// the flow event callback needs.
-// Basically the solClient_session_createFlow argument list.
-struct callback_data_t {
-    char **flowProps;
-    solClient_opaqueSession_pt session_p;
-    solClient_opaqueFlow_pt *flow_pp;
-    solClient_flow_createFuncInfo_t *flowFuncInfo_p;
-    size_t flowFuncInfo_size;
-};
-
 /* Message Count */
 static int msgCount = 0;
 
@@ -77,33 +65,17 @@ sessionEventCallback ( solClient_opaqueSession_pt opaqueSession_p,
 static void
 flowEventCallback ( solClient_opaqueFlow_pt opaqueFlow_p, solClient_flow_eventCallbackInfo_pt eventInfo_p, void *user_p )
 {
-    struct callback_data_t *callback_data_p = (struct callback_data_t*) user_p;
-    solClient_errorInfo_pt errorInfo_p;
-    if (eventInfo_p->flowEvent == SOLCLIENT_FLOW_EVENT_DOWN_ERROR) {
-        errorInfo_p = solClient_getLastErrorInfo();
-        if (errorInfo_p->subCode == SOLCLIENT_SUBCODE_REPLAY_STARTED) {
-            printf ( "Router indicating replay, reconnecting flow to recieve messages.\n" );
-            // This way replayed messages can show up as many times as the replay restarts,
-            // without the Assured Delivery subsystem filtering them as duplicates
-            // the second and consecutive times.
-            solClient_flow_destroy(callback_data_p->flow_pp);
-            solClient_session_createFlow ( callback_data_p->flowProps,
-                    callback_data_p->session_p,
-                    callback_data_p->flow_pp,
-                    callback_data_p->flowFuncInfo_p,
-                    callback_data_p->flowFuncInfo_size);
+    // The flow can not be destroyed and re-created from this callback,
+    // so the errorInfo is only saved instead, and processed on the main loop.
+    solClient_errorInfo_pt flowErrorInfo_p = (solClient_errorInfo_pt) user_p;
+    solClient_errorInfo_pt errorInfo_p = solClient_getLastErrorInfo();
+    flowErrorInfo_p->responseCode = errorInfo_p->responseCode;
+    flowErrorInfo_p->subCode = errorInfo_p->subCode;
+    strncpy(errorInfo_p->errorStr, flowErrorInfo_p->errorStr, sizeof(flowErrorInfo_p->errorStr));
 
-            // Alternatively, the application could reconnect the session instead,
-            // leaving the flow intact (relying on auto-rebind)
-            // and not receive the messages from the replay log repeatedly:
-
-            //solClient_opaqueSession_pt session_p = callback_data_p->session_p;
-            //solClient_session_disconnect ( session_p );
-            //solClient_session_connect ( session_p );
-
-        }
-
-    }
+    printf ( "flowEventCallbackFunc() called - %s; subCode: %s, responseCode: %d, reason: \"%s\"\n",
+            solClient_flow_eventToString ( eventInfo_p->flowEvent ),
+            solClient_subCodeToString ( errorInfo_p->subCode ), errorInfo_p->responseCode, errorInfo_p->errorStr );
 }
 
 /*****************************************************************************
@@ -176,6 +148,7 @@ main ( int argc, char *argv[] )
 
     /* solClient needs to be initialized before any other API calls. */
     solClient_initialize ( SOLCLIENT_LOG_DEFAULT_FILTER, NULL );
+    //solClient_initialize ( SOLCLIENT_LOG_DEBUG, NULL );
 
     /*************************************************************************
      * CREATE A CONTEXT
@@ -266,7 +239,7 @@ main ( int argc, char *argv[] )
     propIndex = 0;
 
     flowProps[propIndex++] = SOLCLIENT_FLOW_PROP_BIND_BLOCKING;
-    flowProps[propIndex++] = SOLCLIENT_PROP_DISABLE_VAL;
+    flowProps[propIndex++] = SOLCLIENT_PROP_ENABLE_VAL;
 
     flowProps[propIndex++] = SOLCLIENT_FLOW_PROP_BIND_ENTITY_ID;
     flowProps[propIndex++] = SOLCLIENT_FLOW_PROP_BIND_ENTITY_QUEUE;
@@ -291,22 +264,22 @@ main ( int argc, char *argv[] )
     // RFC3339 date with timezone:
     // flowProps[propIndex] = "DATE:2019-04-03T18:48:00Z-05:00";
 
-    propIndex++;
-
-    struct callback_data_t callback_data;
-    callback_data.session_p = session_p;
-    callback_data.flow_pp = &flow_p;
-    callback_data.flowProps = ( char ** ) flowProps;
-    callback_data.flowFuncInfo_p = &flowFuncInfo;
-    callback_data.flowFuncInfo_size = sizeof(flowFuncInfo);
-
-    flowFuncInfo.eventInfo.user_p = &callback_data;
+    solClient_errorInfo_t flowErrorInfo = {0, 0, ""};
+    flowFuncInfo.eventInfo.user_p = &flowErrorInfo;
 
 
 
-    solClient_session_createFlow ( ( char ** ) flowProps,
+    int rc = solClient_session_createFlow ( ( char ** ) flowProps,
                                    session_p,
                                    &flow_p, &flowFuncInfo, sizeof ( flowFuncInfo ) );
+
+    if (rc != SOLCLIENT_OK) {
+        printf ( "Flow bind failed with rc %d.\n", rc );
+        solClient_errorInfo_pt errorInfo_p = solClient_getLastErrorInfo();
+        printf ( "ErrorInfo subCode: %s, responseCode: %d, reason: \"%s\"\n", solClient_subCodeToString ( errorInfo_p->subCode ), errorInfo_p->responseCode, errorInfo_p->errorStr );
+        return -1;
+    }
+
 
     /*************************************************************************
      * Wait for messages
@@ -315,6 +288,57 @@ main ( int argc, char *argv[] )
     printf ( "Waiting for 10 messages......\n" );
     fflush ( stdout );
     while ( msgCount < 10 ) {
+        if (flowErrorInfo.subCode  != 0) {
+            if (flowErrorInfo.subCode == SOLCLIENT_SUBCODE_REPLAY_STARTED) {
+                printf ( "Router indicating replay, reconnecting flow to recieve messages.\n" );
+                flowErrorInfo.responseCode = 0;
+                flowErrorInfo.subCode = 0;
+                flowErrorInfo.errorStr[0] = '\0';
+
+                // This way replayed messages can show up as many times as the replay restarts,
+                // without the Assured Delivery subsystem filtering them out as duplicates
+                // the second and consecutive times.
+
+                solClient_flow_destroy(&flow_p);
+                rc = solClient_session_createFlow ( ( char ** ) flowProps,
+                        session_p,
+                        &flow_p, &flowFuncInfo, sizeof ( flowFuncInfo ) );
+                if (rc != SOLCLIENT_OK) {
+                    printf ( "Flow bind failed with rc %d.\n", rc );
+                    solClient_errorInfo_pt errorInfo_p = solClient_getLastErrorInfo();
+                    printf ( "ErrorInfo subCode: %s, responseCode: %d, reason: \"%s\"\n", solClient_subCodeToString ( errorInfo_p->subCode ), errorInfo_p->responseCode, errorInfo_p->errorStr );
+                    return -1;
+                }
+
+                // Alternatively, the application could reconnect the session instead,
+                // leaving the flow intact (relying on auto-rebind)
+                // and not receive the messages from the replay log repeatedly:
+
+                //solClient_session_disconnect ( session_p );
+                //solClient_session_connect ( session_p );
+
+            } else if (flowErrorInfo.subCode == SOLCLIENT_SUBCODE_REPLAY_START_TIME_NOT_AVAILABLE) {
+                // This can only happen when the replay is requested from a specific start time,
+                // which is older than the replay log on the router.
+                printf ( "Replay log does not cover requested time period, reconnecting flow for full log instead.\n" );
+                flowErrorInfo.responseCode = 0;
+                flowErrorInfo.subCode = 0;
+                flowErrorInfo.errorStr[0] = '\0';
+
+                flowProps[propIndex] = SOLCLIENT_FLOW_PROP_REPLAY_START_LOCATION_BEGINNING;
+                solClient_flow_destroy(&flow_p);
+                rc = solClient_session_createFlow ( ( char ** ) flowProps,
+                        session_p,
+                        &flow_p, &flowFuncInfo, sizeof ( flowFuncInfo ) );
+                if (rc != SOLCLIENT_OK) {
+                    printf ( "Flow bind failed with rc %d.\n", rc );
+                    solClient_errorInfo_pt errorInfo_p = solClient_getLastErrorInfo();
+                    printf ( "ErrorInfo subCode: %s, responseCode: %d, reason: \"%s\"\n", solClient_subCodeToString ( errorInfo_p->subCode ), errorInfo_p->responseCode, errorInfo_p->errorStr );
+                    return -1;
+                }
+            }
+        }
+
         SLEEP ( 1 );
     }
 
