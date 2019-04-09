@@ -1,5 +1,5 @@
 /** @example ex/Intro/MessageReplaySubscriber.c
- */
+*/
 
 /*
  *  Copyright 2019 Solace Corporation. All rights reserved.
@@ -16,32 +16,32 @@
  *
  *  MessageReplaySubscriber
  *
- *  This sample demonstrates the message replay feature in the Solace Message 
- *  Router.  
+ *  This sample demonstrates the message replay feature in the Solace Message
+ *  Router.
  *
  *******************************************************************************
  *  SETUP
  *
- *  Before running this sample be sure that message-replay is enabled in the VPN
- *  usd for the test. 
- *  Also messages must have been published to the replay-log for the queue that is 
- *  used.  The QueuePublisher sample can be used to create and publish messages to 
- *  the queue.  The QueueSubscriber sample can be used to drain the queue, so that 
+ *  Before running this sample, be sure that message-replay is enabled in the VPN
+ *  used.
+ *  Also messages must have been published to the replay-log for the queue that is
+ *  used. The QueuePublisher sample can be used to create and publish messages to
+ *  the queue. The QueueSubscriber sample can be used to drain the queue, so that
  *  replay is performed on an empty queue and observed by this sample.
  ********************************************************************************
  *
  ********************************************************************************
- *  TES
+ *  OPERATION
  *
- *  First, a client initiated replay is started when the flow connects.  All 
- *  messages are requested from the replay log. Comments also explain  how to
+ *  First, a client initiated replay is started when the flow connects. All
+ *  messages are requested from the replay log. Comments also explain how to
  *  request the replay log from a specific start time.
  *
  *  Second, the application waits for a CLI/Message-Router initiated replay.
  *  The flow event handler monitors for a replay start event. When the Message-Router
  *  initiates a replay, the flow will see a DOWN_ERROR event with cause
- *  'Replay Started'.  This means an operator has initiated a replay, and the
- *  application must destroy and re-create the flow  to receive the replayed messages.
+ *  'Replay Started'. This means an operator has initiated a replay, and the
+ *  application must destroy and re-create the flow to receive the replayed messages.
  */
 
 #include "os.h"
@@ -58,7 +58,7 @@ static int msgCount = 0;
  * The message receive callback is mandatory for session creation. This
  * callback silently discards all received messages.
  *****************************************************************************/
-static          solClient_rxMsgCallback_returnCode_t
+    static          solClient_rxMsgCallback_returnCode_t
 sessionMessageReceiveCallback ( solClient_opaqueSession_pt opaqueSession_p, solClient_opaqueMsg_pt msg_p, void *user_p )
 {
     return SOLCLIENT_CALLBACK_OK;
@@ -70,9 +70,9 @@ sessionMessageReceiveCallback ( solClient_opaqueSession_pt opaqueSession_p, solC
  * The event callback function is mandatory for session creation. This callback
  * ignores all session events.
  *****************************************************************************/
-void
+    void
 sessionEventCallback ( solClient_opaqueSession_pt opaqueSession_p,
-                solClient_session_eventCallbackInfo_pt eventInfo_p, void *user_p )
+        solClient_session_eventCallbackInfo_pt eventInfo_p, void *user_p )
 {
 }
 
@@ -80,25 +80,27 @@ sessionEventCallback ( solClient_opaqueSession_pt opaqueSession_p,
  * flowEventCallback
  *
  * The event callback function is mandatory for flow creation.  Monitor for
- * SOLCLIENT_FLOW_EVENT_DOWN_ERROR. When see, save the error information for
+ * SOLCLIENT_FLOW_EVENT_DOWN_ERROR. When seen, save the error information for
  * processing by the main thread.
  *****************************************************************************/
-static void
+    static void
 flowEventCallback ( solClient_opaqueFlow_pt opaqueFlow_p, solClient_flow_eventCallbackInfo_pt eventInfo_p, void *user_p )
 {
-    // The flow can not be destroyed and re-created from this callback,
-    // so the errorInfo is only saved instead, and processed on the main loop.
+    /*
+     * The flow can not be destroyed and re-created from this callback,
+     *  so the errorInfo is only saved instead, and processed on the main loop.
+     */
+    solClient_errorInfo_pt errorInfo_p = solClient_getLastErrorInfo();
+    printf ( "flowEventCallbackFunc() called - %s; subCode: %s, responseCode: %d, reason: \"%s\"\n",
+            solClient_flow_eventToString ( eventInfo_p->flowEvent ),
+            solClient_subCodeToString ( errorInfo_p->subCode ), errorInfo_p->responseCode, errorInfo_p->errorStr );
+
     if ( SOLCLIENT_FLOW_EVENT_DOWN_ERROR == eventInfo_p->flowEvent ) {
         solClient_errorInfo_pt flowErrorInfo_p = (solClient_errorInfo_pt) user_p;
-        solClient_errorInfo_pt errorInfo_p = solClient_getLastErrorInfo();
         flowErrorInfo_p->responseCode = errorInfo_p->responseCode;
         flowErrorInfo_p->subCode = errorInfo_p->subCode;
         strncpy(errorInfo_p->errorStr, flowErrorInfo_p->errorStr, sizeof(flowErrorInfo_p->errorStr));
     }
-
-    printf ( "flowEventCallbackFunc() called - %s; subCode: %s, responseCode: %d, reason: \"%s\"\n",
-            solClient_flow_eventToString ( eventInfo_p->flowEvent ),
-            solClient_subCodeToString ( errorInfo_p->subCode ), errorInfo_p->responseCode, errorInfo_p->errorStr );
 }
 
 /*****************************************************************************
@@ -106,7 +108,7 @@ flowEventCallback ( solClient_opaqueFlow_pt opaqueFlow_p, solClient_flow_eventCa
  *
  * The message receive callback is mandatory for session creation.
  *****************************************************************************/
-static          solClient_rxMsgCallback_returnCode_t
+    static          solClient_rxMsgCallback_returnCode_t
 flowMessageReceiveCallback ( solClient_opaqueFlow_pt opaqueFlow_p, solClient_opaqueMsg_pt msg_p, void *user_p )
 {
     solClient_msgId_t msgId;
@@ -131,7 +133,7 @@ flowMessageReceiveCallback ( solClient_opaqueFlow_pt opaqueFlow_p, solClient_opa
  *
  * The entry point to the application.
  *****************************************************************************/
-int
+    int
 main ( int argc, char *argv[] )
 {
     /* Context */
@@ -180,7 +182,7 @@ main ( int argc, char *argv[] )
      * Context thread.
      */
     solClient_context_create ( SOLCLIENT_CONTEXT_PROPS_DEFAULT_WITH_CREATE_THREAD,
-                                           &context_p, &contextFuncInfo, sizeof ( contextFuncInfo ) );
+            &context_p, &contextFuncInfo, sizeof ( contextFuncInfo ) );
 
     /*************************************************************************
      * Create and connect a Session
@@ -207,8 +209,8 @@ main ( int argc, char *argv[] )
 
     /* Create the Session. */
     solClient_session_create ( ( char ** ) sessionProps,
-                               context_p,
-                               &session_p, &sessionFuncInfo, sizeof ( sessionFuncInfo ) );
+            context_p,
+            &session_p, &sessionFuncInfo, sizeof ( sessionFuncInfo ) );
 
     /* Connect the Session. */
     solClient_session_connect ( session_p );
@@ -233,7 +235,7 @@ main ( int argc, char *argv[] )
     provProps[provIndex++] = SOLCLIENT_ENDPOINT_PROP_QUOTA_MB;
     provProps[provIndex++] = "100";
 
-    /* Check if the endpoint provisioning is support */
+    /* Check whether endpoint provisioning is supported */
     if ( !solClient_session_isCapable ( session_p, SOLCLIENT_SESSION_CAPABILITY_ENDPOINT_MANAGEMENT ) ) {
 
         printf ( "Endpoint management not supported on this appliance.\n" );
@@ -242,10 +244,10 @@ main ( int argc, char *argv[] )
 
     /* Try to provision the Queue. Ignore if already exists */
     solClient_session_endpointProvision ( ( char ** ) provProps,
-                                          session_p,
-                                          SOLCLIENT_PROVISION_FLAGS_WAITFORCONFIRM|
-                                          SOLCLIENT_PROVISION_FLAGS_IGNORE_EXIST_ERRORS,
-                                          NULL, NULL, 0 );
+            session_p,
+            SOLCLIENT_PROVISION_FLAGS_WAITFORCONFIRM|
+            SOLCLIENT_PROVISION_FLAGS_IGNORE_EXIST_ERRORS,
+            NULL, NULL, 0 );
 
     /*************************************************************************
      * Create a Flow
@@ -271,35 +273,38 @@ main ( int argc, char *argv[] )
 
     flowProps[propIndex++] = SOLCLIENT_FLOW_PROP_BIND_NAME;
     flowProps[propIndex++] = argv[5];
-    
+
     /*
-     * Remember the replayStartLocation index for later, as we 
+     * Remember the replayStartLocation index for later, as we
      * need to modify or remove this property.
      */
     replayStartLocationIndex = propIndex;
 
     flowProps[propIndex++] = SOLCLIENT_FLOW_PROP_REPLAY_START_LOCATION;
-    flowProps[propIndex++] = SOLCLIENT_FLOW_PROP_REPLAY_START_LOCATION_BEGINNING;
+    flowProps[propIndex] = SOLCLIENT_FLOW_PROP_REPLAY_START_LOCATION_BEGINNING;
 
     /***************************************************************
-     * Alternative replay start specifications to try instead of 
+     * Alternative replay start specifications to try instead of
      * SOLCLIENT_FLOW_PROP_REPLAY_START_LOCATION_BEGINNING.
-     *
-     * Seconds since UNIX epoch:
-     * flowProps[propIndex] = "DATE:1554331492";
-     *
-     * RFC3339 UTC date with timezone offset 0:
-     * flowProps[propIndex] = "DATE:2019-04-03T18:48:00Z";
-     *
-     * RFC3339 date with timezone:
-     * flowProps[propIndex] = "DATE:2019-04-03T18:48:00Z-05:00";
-     **************************************************************/
-    
+     */
+     /* Seconds since UNIX epoch: */
+     // flowProps[propIndex] = "DATE:1554331492";
+
+     /* RFC3339 UTC date with timezone offset 0: */
+     // flowProps[propIndex] = "DATE:2019-04-03T18:48:00Z";
+
+     /* RFC3339 date with timezone: */
+     // flowProps[propIndex] = "DATE:2019-04-03T18:48:00Z-05:00";
+
+     /**************************************************************/
+
+    propIndex++;
+
     /**************************************************************
-     * NULL terminated the flow properties array
+     * NULL terminating the flow properties array
      **************************************************************/
     flowProps[propIndex++] = NULL;
-    flowPRops[propIndex] = NULL;
+    flowProps[propIndex] = NULL;
 
     solClient_errorInfo_t flowErrorInfo = {SOLCLIENT_SUBCODE_OK, 0, ""};
     flowFuncInfo.eventInfo.user_p = &flowErrorInfo;
@@ -307,8 +312,8 @@ main ( int argc, char *argv[] )
 
 
     int rc = solClient_session_createFlow ( ( char ** ) flowProps,
-                                   session_p,
-                                   &flow_p, &flowFuncInfo, sizeof ( flowFuncInfo ) );
+            session_p,
+            &flow_p, &flowFuncInfo, sizeof ( flowFuncInfo ) );
 
     if (rc != SOLCLIENT_OK) {
         printf ( "Flow bind failed with rc %d.\n", rc );
@@ -332,24 +337,27 @@ main ( int argc, char *argv[] )
                 flowErrorInfo.subCode = 0;
                 flowErrorInfo.errorStr[0] = '\0';
 
-                // This way replayed messages can show up as many times as the replay restarts,
-                // without the Assured Delivery subsystem filtering them out as duplicates
-                // the second and consecutive times.
+                /*
+                 * Destroying and re-creating the flow
+                 * so messages can show up as many times as the replay restarts,
+                 * without the Assured Delivery subsystem filtering them out as duplicates
+                 * the second and consecutive times.
+                 */
 
                 solClient_flow_destroy(&flow_p);
                 /*
-                 * Remove the REPLAU_START_LOCATION from the flow properties array
+                 * Remove the REPLAY_START_LOCATION from the flow properties array
                  * as it would override the operator initiated replay request.
-                 * NOTE: the REPLAY_START_LOCATION must be the last property 
+                 * NOTE: the REPLAY_START_LOCATION must be the last property
                  * for this to work.
                  */
                 propIndex = replayStartLocationIndex;
                 /**************************************************************
-                 * NULL terminated the flow properties array
+                 * NULL terminating the flow properties array
                  **************************************************************/
                 flowProps[propIndex++] = NULL;
-                flowPRops[propIndex] = NULL;
-                   
+                flowProps[propIndex] = NULL;
+
                 rc = solClient_session_createFlow ( ( char ** ) flowProps,
                         session_p,
                         &flow_p, &flowFuncInfo, sizeof ( flowFuncInfo ) );
@@ -360,8 +368,10 @@ main ( int argc, char *argv[] )
                     return -1;
                 }
             } else if (flowErrorInfo.subCode == SOLCLIENT_SUBCODE_REPLAY_START_TIME_NOT_AVAILABLE) {
-                // This can only happen when the replay is requested from a specific start time,
-                // which is older than the replay log on the router.
+                /*
+                 * This can only happen when the replay is requested from a specific start time,
+                 * which is older than the replay log on the router.
+                 */
                 printf ( "Replay log does not cover requested time period, reconnecting flow for full log instead.\n" );
                 flowErrorInfo.responseCode = 0;
                 flowErrorInfo.subCode = 0;
